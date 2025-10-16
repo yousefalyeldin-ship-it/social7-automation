@@ -1,6 +1,7 @@
 /**
  * Social 7 Bar & Grill - Automated Order Placement
  * PRODUCTION VERSION - Based on actual website flow
+ * UPDATED: Smart pickup time handling in special instructions
  * 
  * SETUP:
  * npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
@@ -13,7 +14,7 @@ puppeteer.use(StealthPlugin());
 // Configuration
 const CONFIG = {
   restaurantURL: 'https://order.tbdine.com/pickup/48684/menu',
-  botEmail: 'yousef.alyeldin5@gmial.com', 
+  botEmail: 'orders@social7bot.com', // ← CHANGE THIS to your email
   botLastName: 'PAM', // Identifier for bot orders
   headless: true, // Set to false for debugging
   timeout: 30000,
@@ -29,7 +30,7 @@ async function placeOrder(orderData) {
     order_items,        // "bruschetta, 1lb wings hot sauce"
     customer_name,      // "John Smith"
     customer_phone,     // "4165551234"
-    pickup_time,        // "in 30 minutes" (actually ignored - site auto-calculates)
+    pickup_time,        // "in 30 minutes", "ASAP", "at 6 PM", "in 1 hour"
     special_instructions // "no onions, extra sauce"
   } = orderData;
 
@@ -100,11 +101,9 @@ async function placeOrder(orderData) {
     await submitGuestForm(page, orderResult);
     await takeScreenshot(page, '06-final-checkout', orderResult);
 
-    // Step 7: Add pickup notes (special instructions)
-    if (special_instructions && special_instructions.trim() !== '') {
-      console.log('📝 Step 7: Adding special instructions...');
-      await addPickupNotes(page, special_instructions, orderResult);
-    }
+    // Step 7: Add pickup notes (pickup time + special instructions combined)
+    console.log('📝 Step 7: Adding pickup notes...');
+    await addPickupNotes(page, pickup_time, special_instructions, orderResult);
 
     // Step 8: Verify payment method (should already be "Cash - Pay at restaurant")
     console.log('💳 Step 8: Verifying payment method...');
@@ -489,19 +488,42 @@ async function submitGuestForm(page, result) {
 }
 
 /**
- * Add pickup notes (special instructions)
+ * Add pickup notes (pickup time + special instructions combined)
  */
-async function addPickupNotes(page, instructions, result) {
+async function addPickupNotes(page, pickupTime, specialInstructions, result) {
   try {
-    // Find the pickup notes textarea
-    const notesField = await page.$('textarea, input[placeholder*="Pickup Notes" i], input[placeholder*="notes" i]');
+    // Build combined notes
+    let combinedNotes = '';
     
-    if (notesField) {
-      await notesField.click();
-      await notesField.type(instructions, { delay: 50 });
-      console.log(`  ✓ Added pickup notes: ${instructions}`);
+    // Add pickup time if it's NOT the default (30 minutes / ASAP)
+    const isDefaultTime = !pickupTime || 
+                          pickupTime.toLowerCase().includes('asap') ||
+                          pickupTime.toLowerCase().includes('30 min') ||
+                          pickupTime.toLowerCase().includes('30min') ||
+                          pickupTime.toLowerCase().includes('soon');
+    
+    if (!isDefaultTime) {
+      combinedNotes += `⏰ PICKUP TIME: ${pickupTime}\n\n`;
+    }
+    
+    // Add special instructions if any
+    if (specialInstructions && specialInstructions.trim() !== '') {
+      combinedNotes += specialInstructions;
+    }
+    
+    // Only add notes if there's something to add
+    if (combinedNotes.trim()) {
+      const notesField = await page.$('textarea, input[placeholder*="Pickup Notes" i], input[placeholder*="notes" i]');
+      
+      if (notesField) {
+        await notesField.click();
+        await notesField.type(combinedNotes.trim(), { delay: 50 });
+        console.log(`  ✓ Added pickup notes: ${combinedNotes.trim()}`);
+      } else {
+        console.log('  ⚠️  Pickup notes field not found (this is OK)');
+      }
     } else {
-      console.log('  ⚠️  Pickup notes field not found (this is OK)');
+      console.log('  ℹ️  No special instructions or custom pickup time');
     }
   } catch (error) {
     console.log('  ⚠️  Could not add pickup notes:', error.message);
@@ -719,7 +741,7 @@ if (require.main === module) {
     order_items: 'bruschetta',
     customer_name: 'John Smith',
     customer_phone: '4165551234',
-    pickup_time: 'ASAP',
+    pickup_time: 'in 1 hour',
     special_instructions: 'Extra napkins please'
   };
   
